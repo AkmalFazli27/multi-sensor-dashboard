@@ -75,99 +75,67 @@ if "sensor_data" not in st.session_state:
     st.session_state.mqtt_connected = False
     st.session_state.client = None
 
+# Referensi global untuk callback MQTT (menghindari warning ScriptRunContext)
+_sensor_data_ref = st.session_state.sensor_data
+
 
 # Callback MQTT
 def on_connect(client, userdata, flags, rc, properties=None):
-    try:
-        if rc == 0:
-            # Update status di SensorData yang lebih stabil
-            try:
-                if "sensor_data" in st.session_state:
-                    st.session_state.sensor_data.set_mqtt_connected(True)
-                if "mqtt_connected" in st.session_state:
-                    st.session_state.mqtt_connected = True
-            except:
-                pass  # Suppress session_state warnings in thread
-            
-            # Subscribe ke semua topic sensor
-            client.subscribe(TOPIC_TEMP_AIR)
-            client.subscribe(TOPIC_TEMP_SOIL)
-            client.subscribe(TOPIC_WATER_LEVEL)
-            client.subscribe(TOPIC_SERVO_STATUS)
-            client.subscribe(TOPIC_SERVO_CONTROL)
+    if rc == 0:
+        # Update status koneksi menggunakan referensi global
+        _sensor_data_ref.set_mqtt_connected(True)
+        
+        # Subscribe ke semua topic sensor
+        client.subscribe(TOPIC_TEMP_AIR)
+        client.subscribe(TOPIC_TEMP_SOIL)
+        client.subscribe(TOPIC_WATER_LEVEL)
+        client.subscribe(TOPIC_SERVO_STATUS)
+        client.subscribe(TOPIC_SERVO_CONTROL)
 
-            print("Connected to MQTT Broker!")
-        else:
-            try:
-                if "sensor_data" in st.session_state:
-                    st.session_state.sensor_data.set_mqtt_connected(False)
-                if "mqtt_connected" in st.session_state:
-                    st.session_state.mqtt_connected = False
-            except:
-                pass  # Suppress session_state warnings in thread
-            print(f"Failed to connect, return code {rc}")
-    except Exception as e:
-        print(f"Error in on_connect: {e}")
+        print("✅ Connected to MQTT Broker!")
+        print(f"📡 Subscribed to: {TOPIC_TEMP_AIR}, {TOPIC_TEMP_SOIL}, {TOPIC_WATER_LEVEL}, {TOPIC_SERVO_STATUS}")
+    else:
+        _sensor_data_ref.set_mqtt_connected(False)
+        print(f"❌ Failed to connect, return code {rc}")
 
 
 def on_message(client, userdata, msg):
     try:
-        # Ensure session_state.sensor_data exists before accessing
-        try:
-            if (
-                not hasattr(st.session_state, "sensor_data")
-                or st.session_state.sensor_data is None
-            ):
-                return
-        except:
-            return  # Suppress session_state warnings in thread
-
         topic = msg.topic
         payload = json.loads(msg.payload.decode())
         
         # Debug logging
         print(f"📨 [{topic}] {payload}")
 
-        try:
-            if topic == TOPIC_TEMP_AIR:
-                temp = payload.get("temperature", 0)
-                st.session_state.sensor_data.add_temp_air(temp)
-                print(f"  🌤️ Air Temp: {temp}°C")
-            elif topic == TOPIC_TEMP_SOIL:
-                temp = payload.get("temperature", 0)
-                st.session_state.sensor_data.add_temp_soil(temp)
-                print(f"  🌱 Soil Temp: {temp}°C")
-            elif topic == TOPIC_WATER_LEVEL:
-                # Handle water level with capacity_percent and distance
-                capacity = payload.get("capacity_percent", 0)
-                distance = payload.get("distance", 0)
-                st.session_state.sensor_data.add_water_level(capacity, distance)
-                print(f"  💧 Water: {capacity}% (distance: {distance}cm)")
-            elif topic == TOPIC_SERVO_STATUS:
-                status = payload.get("status", "OFF")
-                st.session_state.sensor_data.servo_status = status
-                print(f"  🎛️ Servo: {status}")
-        except Exception as e:
-            print(f"  ❌ Error updating data: {e}")
+        # Gunakan referensi global untuk menghindari warning ScriptRunContext
+        if topic == TOPIC_TEMP_AIR:
+            temp = payload.get("temperature", 0)
+            _sensor_data_ref.add_temp_air(temp)
+            print(f"  🌤️ Air Temp: {temp}°C")
+        elif topic == TOPIC_TEMP_SOIL:
+            temp = payload.get("temperature", 0)
+            _sensor_data_ref.add_temp_soil(temp)
+            print(f"  🌱 Soil Temp: {temp}°C")
+        elif topic == TOPIC_WATER_LEVEL:
+            # Handle water level with capacity_percent and distance
+            capacity = payload.get("capacity_percent", 0)
+            distance = payload.get("distance", 0)
+            _sensor_data_ref.add_water_level(capacity, distance)
+            print(f"  💧 Water: {capacity}% (distance: {distance}cm)")
+        elif topic == TOPIC_SERVO_STATUS:
+            status = payload.get("status", "OFF")
+            _sensor_data_ref.servo_status = status
+            print(f"  🎛️ Servo: {status}")
 
     except json.JSONDecodeError as e:
-        print(f"Failed to decode JSON from {msg.topic}: {e}")
+        print(f"❌ Failed to decode JSON from {msg.topic}: {e}")
     except Exception as e:
-        print(f"Error processing message from {msg.topic}: {e}")
+        print(f"❌ Error processing message from {msg.topic}: {e}")
 
 
 def on_disconnect(client, userdata, rc, properties=None):
-    try:
-        try:
-            if "sensor_data" in st.session_state:
-                st.session_state.sensor_data.set_mqtt_connected(False)
-            if "mqtt_connected" in st.session_state:
-                st.session_state.mqtt_connected = False
-        except:
-            pass  # Suppress session_state warnings in thread
-        print("Disconnected from MQTT Broker")
-    except Exception as e:
-        print(f"Error in on_disconnect: {e}")
+    _sensor_data_ref.set_mqtt_connected(False)
+    print("🔌 Disconnected from MQTT Broker")
 
 
 # Fungsi untuk setup MQTT client
@@ -626,14 +594,6 @@ with tab3:
 
 # Auto refresh - hanya jika checkbox aktif
 if auto_refresh_active:
-    # Update status koneksi secara berkala
-    if is_mqtt_connected():
-        # Jika terhubung, refresh sesuai setting
-        time.sleep(refresh_rate_value)
-    else:
-        # Jika tidak terhubung, coba setup ulang dan refresh lebih cepat
-        if st.session_state.client is None:
-            setup_mqtt()
-        time.sleep(min(refresh_rate_value, 2))  # Maksimal 2 detik saat tidak terhubung
-
+    # Gunakan time.sleep + st.rerun dengan cara yang benar
+    time.sleep(refresh_rate_value)
     st.rerun()
