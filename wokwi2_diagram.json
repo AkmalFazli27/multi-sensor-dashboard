@@ -1,19 +1,52 @@
 {
-  "version": 1,
-  "author": "IoT Project",
-  "editor": "wokwi",
-  "parts": [
-    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
-    { "type": "wokwi-slide-potentiometer", "id": "pot1", "top": -20, "left": 120, "attrs": {} },
-    { "type": "wokwi-servo", "id": "servo1", "top": 100, "left": 120, "attrs": {} }
-  ],
-  "connections": [
-    [ "pot1:VCC", "esp:3V3", "red", [ "h0" ] ],
-    [ "pot1:SIG", "esp:D32", "green", [ "h0" ] ],
-    [ "pot1:GND", "esp:GND", "black", [ "h0" ] ],
-    [ "servo1:V+", "esp:VIN", "red", [ "h0" ] ],
-    [ "servo1:SIG", "esp:D13", "orange", [ "h0" ] ],
-    [ "servo1:GND", "esp:GND", "brown", [ "h0" ] ]
-  ],
-  "dependencies": {}
+	"version": 1,
+	"author": "Muhamad Kemal Faza",
+	"editor": "wokwi",
+	"parts": [
+		{
+			"type": "wokwi-esp32-devkit-v1",
+			"id": "esp",
+			"top": 0,
+			"left": 0,
+			"attrs": {}
+		},
+		{
+			"type": "wokwi-hc-sr04",
+			"id": "ultrasonic1",
+			"top": -363.3,
+			"left": 139.9,
+			"attrs": {}
+		},
+		{
+			"type": "wokwi-servo",
+			"id": "servo1",
+			"top": -347.6,
+			"left": 403.2,
+			"attrs": {}
+		},
+		{
+			"type": "wokwi-breadboard",
+			"id": "bb1",
+			"top": -240,
+			"left": -192,
+			"attrs": {}
+		}
+	],
+	"connections": [
+		["esp:TX0", "$serialMonitor:RX", "", []],
+		["esp:RX0", "$serialMonitor:TX", "", []],
+		["esp:D5", "ultrasonic1:TRIG", "green", ["h0"]],
+		["esp:D18", "ultrasonic1:ECHO", "yellow", ["h0"]],
+		["esp:D4", "servo1:SIG", "orange", ["h0"]],
+		["esp:3V3", "bb1:bp.25", "red", ["h0"]],
+		["esp:GND.1", "bb1:bn.25", "black", ["h33.1", "v-192.7"]],
+		["ultrasonic1:VCC", "bb1:tp.1", "red", ["v0"]],
+		["ultrasonic1:GND", "bb1:tn.1", "black", ["v0"]],
+		["servo1:V+", "bb1:tp.10", "red", ["h-9.6", "v67.3", "h-443.6"]],
+		["servo1:GND", "bb1:tn.10", "black", ["h-19.2", "v86.4", "h-434"]],
+		["bb1:bp.1", "bb1:bp.10", "red", ["v0"]],
+		["bb1:bn.1", "bb1:bn.10", "black", ["v0"]],
+		["servo1:PWM", "esp:D4", "green", ["h-28.8", "v393.8"]]
+	],
+	"dependencies": {}
 }
