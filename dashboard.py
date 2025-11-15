@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from collections import deque
 import threading
-from contextlib import contextmanager, suppress
 
 # Konfigurasi MQTT Broker (Wokwi menggunakan broker public)
 MQTT_BROKER = "broker.hivemq.com"  # Atau gunakan broker.emqx.io
@@ -26,121 +25,228 @@ TOPIC_SERVO_STATUS = "irrigation/actuator/status"
 # Inisialisasi data storage dengan deque untuk performa lebih baik
 MAX_DATA_POINTS = 50
 
+
 class SensorData:
     def __init__(self):
         self.temp_air = deque(maxlen=MAX_DATA_POINTS)
         self.temp_soil = deque(maxlen=MAX_DATA_POINTS)
         self.water_level = deque(maxlen=MAX_DATA_POINTS)
+        self.water_distance = deque(maxlen=MAX_DATA_POINTS)  # Distance in cm
         self.timestamps = deque(maxlen=MAX_DATA_POINTS)
         self.servo_status = "OFF"
         self.last_update = None
-        self.lock = threading.Lock()  # Thread safety
-        
+        self.mqtt_connected = False
+        self.connection_time = None
+
     def add_temp_air(self, value):
-        with self.lock:
-            self.temp_air.append(value)
-            self._update_timestamp()
-    
+        self.temp_air.append(value)
+        self._update_timestamp()
+
     def add_temp_soil(self, value):
-        with self.lock:
-            self.temp_soil.append(value)
-            self._update_timestamp()
-    
-    def add_water_level(self, value):
-        with self.lock:
-            self.water_level.append(value)
-            self._update_timestamp()
-    
-    def set_servo_status(self, status):
-        with self.lock:
-            self.servo_status = status
-    
+        self.temp_soil.append(value)
+        self._update_timestamp()
+
+    def add_water_level(self, capacity, distance=None):
+        self.water_level.append(capacity)
+        if distance is not None:
+            self.water_distance.append(distance)
+        self._update_timestamp()
+
     def _update_timestamp(self):
-        if len(self.timestamps) < MAX_DATA_POINTS or \
-           (len(self.timestamps) > 0 and 
-            (datetime.now() - datetime.fromisoformat(self.timestamps[-1])).seconds >= 1):
+        if len(self.timestamps) < MAX_DATA_POINTS or (
+            len(self.timestamps) > 0
+            and (datetime.now() - datetime.fromisoformat(self.timestamps[-1])).seconds
+            >= 1
+        ):
             self.timestamps.append(datetime.now().isoformat())
         self.last_update = datetime.now()
 
+    def set_mqtt_connected(self, status):
+        self.mqtt_connected = status
+        if status:
+            self.connection_time = datetime.now()
+        else:
+            self.connection_time = None
+
+
 # Inisialisasi session state
-if 'sensor_data' not in st.session_state:
+if "sensor_data" not in st.session_state:
     st.session_state.sensor_data = SensorData()
     st.session_state.mqtt_connected = False
     st.session_state.client = None
 
-# Helper function to safely access session state from threads
-@contextmanager
-def safe_session_state():
-    """Context manager to safely suppress ScriptRunContext warnings"""
-    with suppress(Exception):
-        yield
 
 # Callback MQTT
 def on_connect(client, userdata, flags, rc, properties=None):
-    if rc == 0:
-        with safe_session_state():
-            st.session_state.mqtt_connected = True
-        # Subscribe ke semua topic sensor
-        client.subscribe(TOPIC_TEMP_AIR)
-        client.subscribe(TOPIC_TEMP_SOIL)
-        client.subscribe(TOPIC_WATER_LEVEL)
-        client.subscribe(TOPIC_SERVO_STATUS)
-        print("Connected to MQTT Broker!")
-    else:
-        with safe_session_state():
-            st.session_state.mqtt_connected = False
-        print(f"Failed to connect, return code {rc}")
+    try:
+        if rc == 0:
+            # Update status di SensorData yang lebih stabil
+            try:
+                if "sensor_data" in st.session_state:
+                    st.session_state.sensor_data.set_mqtt_connected(True)
+                if "mqtt_connected" in st.session_state:
+                    st.session_state.mqtt_connected = True
+            except:
+                pass  # Suppress session_state warnings in thread
+            
+            # Subscribe ke semua topic sensor
+            client.subscribe(TOPIC_TEMP_AIR)
+            client.subscribe(TOPIC_TEMP_SOIL)
+            client.subscribe(TOPIC_WATER_LEVEL)
+            client.subscribe(TOPIC_SERVO_STATUS)
+            client.subscribe(TOPIC_SERVO_CONTROL)
+
+            print("Connected to MQTT Broker!")
+        else:
+            try:
+                if "sensor_data" in st.session_state:
+                    st.session_state.sensor_data.set_mqtt_connected(False)
+                if "mqtt_connected" in st.session_state:
+                    st.session_state.mqtt_connected = False
+            except:
+                pass  # Suppress session_state warnings in thread
+            print(f"Failed to connect, return code {rc}")
+    except Exception as e:
+        print(f"Error in on_connect: {e}")
+
 
 def on_message(client, userdata, msg):
     try:
+        # Ensure session_state.sensor_data exists before accessing
+        try:
+            if (
+                not hasattr(st.session_state, "sensor_data")
+                or st.session_state.sensor_data is None
+            ):
+                return
+        except:
+            return  # Suppress session_state warnings in thread
+
+        topic = msg.topic
         payload = json.loads(msg.payload.decode())
         
-        # Get sensor_data reference once
-        sensor_data = userdata  # Pass sensor_data through userdata
-        
-        if msg.topic == TOPIC_TEMP_AIR:
-            sensor_data.add_temp_air(payload.get('temperature', 0))
-        elif msg.topic == TOPIC_TEMP_SOIL:
-            sensor_data.add_temp_soil(payload.get('temperature', 0))
-        elif msg.topic == TOPIC_WATER_LEVEL:
-            sensor_data.add_water_level(payload.get('level', 0))
-        elif msg.topic == TOPIC_SERVO_STATUS:
-            sensor_data.set_servo_status(payload.get('status', 'OFF'))
-            
-    except json.JSONDecodeError:
-        print(f"Failed to decode message from {msg.topic}")
+        # Debug logging
+        print(f"📨 [{topic}] {payload}")
+
+        try:
+            if topic == TOPIC_TEMP_AIR:
+                temp = payload.get("temperature", 0)
+                st.session_state.sensor_data.add_temp_air(temp)
+                print(f"  🌤️ Air Temp: {temp}°C")
+            elif topic == TOPIC_TEMP_SOIL:
+                temp = payload.get("temperature", 0)
+                st.session_state.sensor_data.add_temp_soil(temp)
+                print(f"  🌱 Soil Temp: {temp}°C")
+            elif topic == TOPIC_WATER_LEVEL:
+                # Handle water level with capacity_percent and distance
+                capacity = payload.get("capacity_percent", 0)
+                distance = payload.get("distance", 0)
+                st.session_state.sensor_data.add_water_level(capacity, distance)
+                print(f"  💧 Water: {capacity}% (distance: {distance}cm)")
+            elif topic == TOPIC_SERVO_STATUS:
+                status = payload.get("status", "OFF")
+                st.session_state.sensor_data.servo_status = status
+                print(f"  🎛️ Servo: {status}")
+        except Exception as e:
+            print(f"  ❌ Error updating data: {e}")
+
+    except json.JSONDecodeError as e:
+        print(f"Failed to decode JSON from {msg.topic}: {e}")
     except Exception as e:
-        print(f"Error processing message: {e}")
+        print(f"Error processing message from {msg.topic}: {e}")
+
 
 def on_disconnect(client, userdata, rc, properties=None):
-    with safe_session_state():
-        st.session_state.mqtt_connected = False
-    print("Disconnected from MQTT Broker")
+    try:
+        try:
+            if "sensor_data" in st.session_state:
+                st.session_state.sensor_data.set_mqtt_connected(False)
+            if "mqtt_connected" in st.session_state:
+                st.session_state.mqtt_connected = False
+        except:
+            pass  # Suppress session_state warnings in thread
+        print("Disconnected from MQTT Broker")
+    except Exception as e:
+        print(f"Error in on_disconnect: {e}")
+
 
 # Fungsi untuk setup MQTT client
 def setup_mqtt():
-    if st.session_state.client is None:
-        # Gunakan CallbackAPIVersion.VERSION2 untuk menghindari deprecation warning
+    try:
+        # Reset status koneksi sebelum mencoba koneksi baru
+        if hasattr(st.session_state, "sensor_data") and st.session_state.sensor_data:
+            st.session_state.sensor_data.set_mqtt_connected(False)
+        st.session_state.mqtt_connected = False
+
+        # Tutup koneksi lama jika ada
+        if st.session_state.client is not None:
+            try:
+                st.session_state.client.loop_stop()
+                st.session_state.client.disconnect()
+            except:
+                pass
+            st.session_state.client = None
+
+        # Buat client baru
         client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-        client.user_data_set(st.session_state.sensor_data)  # Pass sensor_data through userdata
         client.on_connect = on_connect
         client.on_message = on_message
         client.on_disconnect = on_disconnect
-        
-        try:
-            client.connect(MQTT_BROKER, MQTT_PORT, 60)
-            client.loop_start()
-            st.session_state.client = client
+
+        # Set timeout yang lebih pendek untuk koneksi
+        client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        client.loop_start()
+        st.session_state.client = client
+
+        # Wait sebentar untuk koneksi
+        time.sleep(1)
+
+        # Cek apakah koneksi berhasil
+        connection_success = is_mqtt_connected()
+
+        if connection_success:
+            st.success(f"✅ Berhasil terhubung ke {MQTT_BROKER}")
             return True
-        except Exception as e:
-            st.error(f"Gagal menghubungkan ke MQTT Broker: {e}")
-            return False
-    return True
+        else:
+            st.warning("⏳ Sedang mencoba terhubung...")
+            return True  # Return true karena proses async
+
+    except Exception as e:
+        st.error(f"❌ Gagal menghubungkan ke MQTT Broker: {e}")
+        st.session_state.client = None
+        return False
+
+
+# Fungsi untuk cek status koneksi MQTT
+def is_mqtt_connected():
+    """Check MQTT connection status from multiple sources"""
+    # Cek dari session state
+    session_connected = getattr(st.session_state, "mqtt_connected", False)
+
+    # Cek dari sensor_data juga
+    sensor_connected = False
+    if hasattr(st.session_state, "sensor_data") and st.session_state.sensor_data:
+        sensor_connected = st.session_state.sensor_data.mqtt_connected
+
+    # Cek apakah client aktif
+    client_active = (
+        st.session_state.client is not None
+        and hasattr(st.session_state.client, "_sock")
+        and st.session_state.client._sock is not None
+    )
+
+    # Return true jika salah satu indikator menunjukkan terhubung
+    return session_connected or sensor_connected or client_active
+
 
 # Fungsi untuk kontrol servo
 def control_servo(action):
-    if st.session_state.client and st.session_state.mqtt_connected:
-        message = json.dumps({"action": action})
+    if st.session_state.client and is_mqtt_connected():
+        # Format baru: {"pump": "ON/OFF", "servo": 90/0}
+        servo_angle = 90 if action == "ON" else 0
+        message = json.dumps({"pump": action, "servo": servo_angle})
+
+        # Publish ke topic utama
         st.session_state.client.publish(TOPIC_SERVO_CONTROL, message)
         return True
     return False
@@ -188,58 +294,105 @@ st.markdown('<div class="main-header">🌡️ Multi-Sensor IoT Dashboard</div>',
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Pengaturan")
-    
+
     # MQTT Connection Status
     st.subheader("Status Koneksi MQTT")
-    if st.session_state.mqtt_connected:
-        st.markdown('<p class="status-connected">🟢 Terhubung</p>', unsafe_allow_html=True)
+    mqtt_status = is_mqtt_connected()
+    if mqtt_status:
+        st.markdown(
+            '<p class="status-connected">🟢 Terhubung</p>', unsafe_allow_html=True
+        )
+        # Tampilkan waktu koneksi jika ada
+        if (
+            hasattr(st.session_state, "sensor_data")
+            and st.session_state.sensor_data
+            and st.session_state.sensor_data.connection_time
+        ):
+            conn_time = st.session_state.sensor_data.connection_time.strftime(
+                "%H:%M:%S"
+            )
+            st.caption(f"Terhubung sejak: {conn_time}")
+
+        # Tampilkan info data terakhir
+        if (
+            hasattr(st.session_state, "sensor_data")
+            and st.session_state.sensor_data
+            and st.session_state.sensor_data.last_update
+        ):
+            last_data = st.session_state.sensor_data.last_update.strftime("%H:%M:%S")
+            st.caption(f"Data terakhir: {last_data}")
     else:
-        st.markdown('<p class="status-disconnected">🔴 Terputus</p>', unsafe_allow_html=True)
-    
-    if st.button("🔄 Hubungkan ke MQTT", use_container_width=True):
-        with st.spinner("Menghubungkan..."):
-            if setup_mqtt():
-                time.sleep(2)
-                st.rerun()
-    
+        st.markdown(
+            '<p class="status-disconnected">🔴 Terputus</p>', unsafe_allow_html=True
+        )
+
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("🔄 Hubungkan", use_container_width=True):
+            with st.spinner("Menghubungkan..."):
+                if setup_mqtt():
+                    time.sleep(2)
+                    st.rerun()
+
+    with col_btn2:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.rerun()
+
     st.divider()
-    
+
     # Info Broker
     st.subheader("📡 Info MQTT Broker")
     st.text(f"Broker: {MQTT_BROKER}")
     st.text(f"Port: {MQTT_PORT}")
-    
+
     st.divider()
-    
+
     # Kontrol Servo
-    st.subheader("💧 Kontrol Servo Air")
-    
+    st.subheader("💧 Kontrol Pump & Servo")
+
+    # Cek status koneksi untuk kontrol servo
+    can_control = is_mqtt_connected()
+
+    if not can_control:
+        st.warning("⚠️ MQTT tidak terhubung - tidak bisa mengontrol pump/servo")
+
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("▶️ ON", use_container_width=True):
+        if st.button("▶️ PUMP ON", use_container_width=True, disabled=not can_control):
             if control_servo("ON"):
-                st.success("Servo ON!")
+                st.success("Pump ON!")
+                # Force update servo status
+                if hasattr(st.session_state, "sensor_data"):
+                    st.session_state.sensor_data.servo_status = "ON"
             else:
                 st.error("Gagal mengirim perintah")
-    
+
     with col2:
-        if st.button("⏹️ OFF", use_container_width=True):
+        if st.button("⏹️ PUMP OFF", use_container_width=True, disabled=not can_control):
             if control_servo("OFF"):
-                st.success("Servo OFF!")
+                st.success("Pump OFF!")
+                # Force update servo status
+                if hasattr(st.session_state, "sensor_data"):
+                    st.session_state.sensor_data.servo_status = "OFF"
             else:
                 st.error("Gagal mengirim perintah")
-    
-    st.text(f"Status: {st.session_state.sensor_data.servo_status}")
-    
+
+    # Status servo dengan indikator visual
+    servo_status = st.session_state.sensor_data.servo_status
+    status_color = "🟢" if servo_status == "ON" else "🔴"
+    st.markdown(f"**Status: {status_color} {servo_status}**")
+
     st.divider()
-    
+
     # Auto refresh
     st.subheader("🔄 Auto Refresh")
-    auto_refresh = st.checkbox("Aktifkan Auto Refresh", value=True)
-    if auto_refresh:
-        refresh_rate = st.slider("Interval (detik)", 1, 10, 3)
+    auto_refresh_active = st.checkbox("Aktifkan Auto Refresh", value=True)
+    if auto_refresh_active:
+        refresh_rate_value = st.slider("Interval (detik)", 1, 10, 3)
+    else:
+        refresh_rate_value = 3
 
-# Setup MQTT saat pertama kali
+# Setup MQTT saat pertama kali (hanya jika belum ada)
 if st.session_state.client is None:
     setup_mqtt()
 
@@ -282,94 +435,132 @@ with tab1:
     # Metrics Row - Wokwi 2 (Sensor Air & Servo)
     st.subheader("💧 Wokwi 2 - Sensor Air & Servo")
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
-        water_level_current = st.session_state.sensor_data.water_level[-1] if st.session_state.sensor_data.water_level else 0
+        water_level_current = (
+            st.session_state.sensor_data.water_level[-1]
+            if st.session_state.sensor_data.water_level
+            else 0
+        )
         st.metric(
             label="💦 Level Air",
             value=f"{water_level_current:.1f} %",
-            delta=f"{water_level_current - (st.session_state.sensor_data.water_level[-2] if len(st.session_state.sensor_data.water_level) > 1 else water_level_current):.1f} %"
+            delta=f"{water_level_current - (st.session_state.sensor_data.water_level[-2] if len(st.session_state.sensor_data.water_level) > 1 else water_level_current):.1f} %",
         )
-    
+
     with col2:
-        st.metric(
-            label="🎛️ Status Servo",
-            value=st.session_state.sensor_data.servo_status
+        # Show distance info
+        water_distance_current = (
+            st.session_state.sensor_data.water_distance[-1]
+            if st.session_state.sensor_data.water_distance
+            else 0
         )
-    
+        st.metric(
+            label="📏 Jarak Air",
+            value=f"{water_distance_current:.1f} cm",
+            delta=f"{water_distance_current - (st.session_state.sensor_data.water_distance[-2] if len(st.session_state.sensor_data.water_distance) > 1 else water_distance_current):.1f} cm",
+        )
+
     with col3:
+        st.metric(
+            label="🎛️ Status Servo", value=st.session_state.sensor_data.servo_status
+        )
+
         # Progress bar untuk water level
         st.progress(water_level_current / 100 if water_level_current <= 100 else 1.0)
         st.caption(f"Kapasitas: {water_level_current:.1f}%")
 
 with tab2:
     st.subheader("📈 Grafik Sensor Real-time")
-    
+
     if len(st.session_state.sensor_data.timestamps) > 0:
-        # Buat subplot untuk semua sensor
+        # Buat subplot untuk semua sensor (termasuk distance)
         fig = make_subplots(
-            rows=3, cols=1,
-            subplot_titles=('Suhu Udara', 'Suhu Tanah', 'Level Air'),
-            vertical_spacing=0.12,
-            specs=[[{"secondary_y": False}],
-                   [{"secondary_y": False}],
-                   [{"secondary_y": False}]]
+            rows=4,
+            cols=1,
+            subplot_titles=(
+                "Suhu Udara",
+                "Suhu Tanah",
+                "Level Air (%)",
+                "Jarak Air (cm)",
+            ),
+            vertical_spacing=0.08,
+            specs=[
+                [{"secondary_y": False}],
+                [{"secondary_y": False}],
+                [{"secondary_y": False}],
+                [{"secondary_y": False}],
+            ],
         )
-        
+
         timestamps = list(st.session_state.sensor_data.timestamps)
-        
+
         # Suhu Udara
         if st.session_state.sensor_data.temp_air:
             fig.add_trace(
                 go.Scatter(
-                    x=timestamps[-len(st.session_state.sensor_data.temp_air):],
+                    x=timestamps[-len(st.session_state.sensor_data.temp_air) :],
                     y=list(st.session_state.sensor_data.temp_air),
-                    name='Suhu Udara',
-                    line=dict(color='#ff7f0e', width=2),
-                    mode='lines+markers'
+                    name="Suhu Udara",
+                    line=dict(color="#ff7f0e", width=2),
+                    mode="lines+markers",
                 ),
-                row=1, col=1
+                row=1,
+                col=1,
             )
-        
+
         # Suhu Tanah
         if st.session_state.sensor_data.temp_soil:
             fig.add_trace(
                 go.Scatter(
-                    x=timestamps[-len(st.session_state.sensor_data.temp_soil):],
+                    x=timestamps[-len(st.session_state.sensor_data.temp_soil) :],
                     y=list(st.session_state.sensor_data.temp_soil),
-                    name='Suhu Tanah',
-                    line=dict(color='#2ca02c', width=2),
-                    mode='lines+markers'
+                    name="Suhu Tanah",
+                    line=dict(color="#2ca02c", width=2),
+                    mode="lines+markers",
                 ),
-                row=2, col=1
+                row=2,
+                col=1,
             )
-        
+
         # Level Air
         if st.session_state.sensor_data.water_level:
             fig.add_trace(
                 go.Scatter(
-                    x=timestamps[-len(st.session_state.sensor_data.water_level):],
+                    x=timestamps[-len(st.session_state.sensor_data.water_level) :],
                     y=list(st.session_state.sensor_data.water_level),
-                    name='Level Air',
-                    line=dict(color='#1f77b4', width=2),
-                    fill='tozeroy',
-                    mode='lines+markers'
+                    name="Level Air",
+                    line=dict(color="#1f77b4", width=2),
+                    fill="tozeroy",
+                    mode="lines+markers",
                 ),
-                row=3, col=1
+                row=3,
+                col=1,
             )
-        
+
+        # Distance Air
+        if st.session_state.sensor_data.water_distance:
+            fig.add_trace(
+                go.Scatter(
+                    x=timestamps[-len(st.session_state.sensor_data.water_distance) :],
+                    y=list(st.session_state.sensor_data.water_distance),
+                    name="Jarak Air",
+                    line=dict(color="#d62728", width=2),
+                    mode="lines+markers",
+                ),
+                row=4,
+                col=1,
+            )
+
         # Update layout
-        fig.update_xaxes(title_text="Waktu", row=3, col=1)
+        fig.update_xaxes(title_text="Waktu", row=4, col=1)
         fig.update_yaxes(title_text="°C", row=1, col=1)
         fig.update_yaxes(title_text="°C", row=2, col=1)
         fig.update_yaxes(title_text="%", row=3, col=1)
-        
-        fig.update_layout(
-            height=800,
-            showlegend=True,
-            hovermode='x unified'
-        )
-        
+        fig.update_yaxes(title_text="cm", row=4, col=1)
+
+        fig.update_layout(height=1000, showlegend=True, hovermode="x unified")
+
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("📡 Menunggu data dari sensor...")
@@ -377,7 +568,8 @@ with tab2:
 with tab3:
     st.subheader("ℹ️ Informasi Dashboard")
     
-    st.markdown("""
+    st.markdown(
+        """
     ### 🎯 Fitur Dashboard:
     
     **Wokwi 1 - Monitoring Suhu:**
@@ -390,32 +582,32 @@ with tab3:
     
     ### 📋 MQTT Topics yang Digunakan:
     
-    **Wokwi 1 (Subscribe):**
-    - `wokwi/sensor/temp_air` - Data suhu udara
-    - `wokwi/sensor/temp_soil` - Data suhu tanah
+    **Sensor Data (Subscribe):**
+    - `irrigation/sensor/environment` - Data suhu udara
+    - `irrigation/sensor/soil` - Data suhu tanah
+    - `irrigation/sensor/water_level` - Data level air
+    - `irrigation/actuator/status` - Status servo
     
-    **Wokwi 2 (Subscribe):**
-    - `wokwi/sensor/water_level` - Data level air
-    - `wokwi/status/servo` - Status servo
-    
-    **Wokwi 2 (Publish):**
-    - `wokwi/control/servo` - Kontrol servo (ON/OFF)
+    **Control (Publish):**
+    - `irrigation/actuator/control` - Kontrol servo (ON/OFF)
     
     ### 📝 Format Pesan JSON:
     
     **Sensor Data:**
     ```json
     {
-        "temperature": 25.5,  // untuk suhu
-        "level": 75.0,        // untuk level air
-        "status": "ON"        // untuk status servo
+        "temperature": 25.5,              // untuk suhu (°C)
+        "capacity_percent": 67,           // untuk level air (%)
+        "distance": 40.97,               // untuk jarak air (cm)
+        "status": "ON"                   // untuk status servo
     }
     ```
     
-    **Kontrol Servo:**
+    **Kontrol Pump/Servo:**
     ```json
     {
-        "action": "ON"  // atau "OFF"
+        "pump": "ON",    // Status pump: "ON" atau "OFF" 
+        "servo": 90      // Sudut servo: 90° (ON) atau 0° (OFF)
     }
     ```
     
@@ -429,9 +621,19 @@ with tab3:
     - Aktifkan Auto Refresh untuk update otomatis
     - Lihat tab "Grafik Real-time" untuk visualisasi data
     - Dashboard menyimpan hingga 50 data point terakhir
-    """)
+    """
+    )
 
-# Auto refresh
-if auto_refresh:
-    time.sleep(refresh_rate)
+# Auto refresh - hanya jika checkbox aktif
+if auto_refresh_active:
+    # Update status koneksi secara berkala
+    if is_mqtt_connected():
+        # Jika terhubung, refresh sesuai setting
+        time.sleep(refresh_rate_value)
+    else:
+        # Jika tidak terhubung, coba setup ulang dan refresh lebih cepat
+        if st.session_state.client is None:
+            setup_mqtt()
+        time.sleep(min(refresh_rate_value, 2))  # Maksimal 2 detik saat tidak terhubung
+
     st.rerun()
