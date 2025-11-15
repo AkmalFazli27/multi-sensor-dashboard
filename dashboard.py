@@ -354,11 +354,11 @@ with st.sidebar:
 
     # Auto refresh
     st.subheader("🔄 Auto Refresh")
-    auto_refresh_active = st.checkbox("Aktifkan Auto Refresh", value=True)
+    auto_refresh_active = st.checkbox("Aktifkan Auto Refresh", value=False, help="⚠️ Dapat menyebabkan tampilan flicker")
     if auto_refresh_active:
-        refresh_rate_value = st.slider("Interval (detik)", 1, 10, 3)
+        refresh_rate_value = st.slider("Interval (detik)", 1, 10, 5)
     else:
-        refresh_rate_value = 3
+        refresh_rate_value = 5
 
 # Setup MQTT saat pertama kali (hanya jika belum ada)
 if st.session_state.client is None:
@@ -592,8 +592,21 @@ with tab3:
     """
     )
 
-# Auto refresh - hanya jika checkbox aktif
 if auto_refresh_active:
-    # Gunakan time.sleep + st.rerun dengan cara yang benar
-    time.sleep(refresh_rate_value)
-    st.rerun()
+    # Pastikan tidak ada race condition dengan menambahkan delay
+    if "last_refresh" not in st.session_state:
+        st.session_state.last_refresh = time.time()
+    
+    current_time = time.time()
+    time_since_refresh = current_time - st.session_state.last_refresh
+    
+    # Hanya refresh jika sudah melewati interval yang ditentukan
+    if time_since_refresh >= refresh_rate_value:
+        st.session_state.last_refresh = current_time
+        time.sleep(0.1)  # Small delay untuk mencegah double rendering
+        st.rerun()
+    else:
+        # Tunggu sisa waktu
+        remaining = refresh_rate_value - time_since_refresh
+        time.sleep(min(remaining, 1))  # Check every 1 second max
+        st.rerun()
