@@ -14,13 +14,13 @@ MQTT_BROKER = "broker.hivemq.com"  # Atau gunakan broker.emqx.io
 MQTT_PORT = 1883
 
 # Topics untuk Wokwi 1 (Sensor Suhu)
-TOPIC_TEMP_AIR = "wokwi/sensor/temp_air"
-TOPIC_TEMP_SOIL = "wokwi/sensor/temp_soil"
+TOPIC_TEMP_AIR = "irrigation/sensor/environment"
+TOPIC_TEMP_SOIL = "irrigation/sensor/soil"
 
 # Topics untuk Wokwi 2 (Sensor Air & Servo)
-TOPIC_WATER_LEVEL = "wokwi/sensor/water_level"
-TOPIC_SERVO_CONTROL = "wokwi/control/servo"
-TOPIC_SERVO_STATUS = "wokwi/status/servo"
+TOPIC_WATER_LEVEL = "irrigation/sensor/water_level"
+TOPIC_SERVO_CONTROL = "irrigation/actuator/control"
+TOPIC_SERVO_STATUS = "irrigation/actuator/status"
 
 # Inisialisasi data storage dengan deque untuk performa lebih baik
 MAX_DATA_POINTS = 50
