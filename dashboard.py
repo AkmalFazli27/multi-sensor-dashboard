@@ -125,8 +125,8 @@ def on_message(client, userdata, msg):
                 print(f"  🌱 Soil Moisture: {soil_moisture}")
                 
         elif topic == TOPIC_TEMP_SOIL:
-            # Support dua format: {"temperature": x} atau langsung dari payload soil
-            temp = payload.get("temperature", payload.get("temp", 0))
+            # Support tiga format: {"temperature": x} atau {"temp": x} atau {"soil": x}
+            temp = payload.get("temperature", payload.get("temp", payload.get("soil", 0)))
             _sensor_data_ref.add_temp_soil(temp)
             print(f"  🌱 Soil Temp: {temp}°C")
             
@@ -138,7 +138,8 @@ def on_message(client, userdata, msg):
             print(f"  💧 Water: {capacity}% (distance: {distance}cm)")
             
         elif topic == TOPIC_SERVO_STATUS:
-            status = payload.get("status", "OFF")
+            # Support dua format: {"status": "OFF"} atau {"pump": "ON", "servo": 90, "mode": "MANUAL"}
+            status = payload.get("status", payload.get("pump", "OFF"))
             _sensor_data_ref.servo_status = status
             print(f"  🎛️ Servo: {status}")
 
