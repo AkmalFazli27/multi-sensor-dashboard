@@ -541,54 +541,102 @@ with tab3:
     ### 🎯 Fitur Dashboard:
     
     **Wokwi 1 - Monitoring Suhu:**
-    - 🌤️ Sensor Suhu Udara
-    - 🌱 Sensor Suhu Tanah
+    - 🌤️ Sensor Suhu Udara (DHT22)
+    - 🌱 Sensor Suhu Tanah (DHT22)
     
     **Wokwi 2 - Monitoring & Kontrol Air:**
-    - 💦 Sensor Level Air
-    - 🎛️ Kontrol Servo untuk Aliran Air
+    - 💦 Sensor Level Air (HC-SR04)
+    - 📏 Jarak Air dari Sensor
+    - 🎛️ Kontrol Pump/Servo untuk Aliran Air
     
     ### 📋 MQTT Topics yang Digunakan:
     
-    **Sensor Data (Subscribe):**
-    - `irrigation/sensor/environment` - Data suhu udara
-    - `irrigation/sensor/soil` - Data suhu tanah
-    - `irrigation/sensor/water_level` - Data level air
-    - `irrigation/actuator/status` - Status servo
+    **Subscribe (Dashboard Menerima Data):**
+    - `irrigation/sensor/environment` - Data suhu udara dari Wokwi 1
+    - `irrigation/sensor/soil` - Data suhu tanah dari Wokwi 1
+    - `irrigation/sensor/water_level` - Data level air & jarak dari Wokwi 2
+    - `irrigation/actuator/status` - Status pump/servo dari Wokwi 2
     
-    **Control (Publish):**
-    - `irrigation/actuator/control` - Kontrol servo (ON/OFF)
+    **Publish (Dashboard Mengirim Perintah):**
+    - `irrigation/actuator/control` - Kontrol pump/servo ke Wokwi 2
     
-    ### 📝 Format Pesan JSON:
+    ### 📝 Format Pesan JSON yang Digunakan:
     
-    **Sensor Data:**
+    **1. Suhu Udara (`irrigation/sensor/environment`):**
     ```json
     {
-        "temperature": 25.5,              // untuk suhu (°C)
-        "capacity_percent": 67,           // untuk level air (%)
-        "distance": 40.97,               // untuk jarak air (cm)
-        "status": "ON"                   // untuk status servo
+        "temperature": 28.5
     }
     ```
     
-    **Kontrol Pump/Servo:**
+    **2. Suhu Tanah (`irrigation/sensor/soil`):**
     ```json
     {
-        "pump": "ON",    // Status pump: "ON" atau "OFF" 
-        "servo": 90      // Sudut servo: 90° (ON) atau 0° (OFF)
+        "temperature": 25.3
     }
     ```
     
-    ### 🔧 Cara Menggunakan:
-    1. Pastikan Wokwi Anda terhubung ke MQTT broker yang sama
-    2. Klik tombol "Hubungkan ke MQTT" di sidebar
-    3. Monitor data sensor secara real-time
-    4. Gunakan tombol ON/OFF untuk mengontrol servo
+    **3. Water Level (`irrigation/sensor/water_level`):**
+    ```json
+    {
+        "capacity_percent": 94,
+        "distance": 7.0
+    }
+    ```
+    - `capacity_percent`: Persentase kapasitas air (0-100%)
+    - `distance`: Jarak dari sensor ke permukaan air (cm)
     
-    ### 💡 Tips:
-    - Aktifkan Auto Refresh untuk update otomatis
-    - Lihat tab "Grafik Real-time" untuk visualisasi data
+    **4. Status Servo (`irrigation/actuator/status`):**
+    ```json
+    {
+        "status": "OFF"
+    }
+    ```
+    - `status`: "ON" atau "OFF"
+    
+    **5. Kontrol Pump/Servo (`irrigation/actuator/control`):**
+    ```json
+    {
+        "pump": "ON",
+        "servo": 90
+    }
+    ```
+    - `pump`: "ON" untuk hidupkan, "OFF" untuk matikan
+    - `servo`: Sudut servo (90° untuk ON, 0° untuk OFF)
+    
+    ### 🔧 Cara Menggunakan Dashboard:
+    
+    1. **Koneksi MQTT:**
+       - Klik tombol "🔄 Hubungkan" di sidebar
+       - Tunggu hingga status menjadi 🟢 Terhubung
+    
+    2. **Monitor Data:**
+       - Tab "📊 Dashboard" untuk melihat data real-time
+       - Tab "📈 Grafik Real-time" untuk visualisasi
+    
+    3. **Kontrol Pump:**
+       - Pastikan MQTT terhubung
+       - Klik "▶️ PUMP ON" untuk hidupkan
+       - Klik "⏹️ PUMP OFF" untuk matikan
+    
+    4. **Refresh Data:**
+       - Manual: Klik tombol "🔄 Refresh" di sidebar
+       - Auto: Centang "Aktifkan Auto Refresh" (optional)
+    
+    ### 💡 Tips & Catatan:
+    
     - Dashboard menyimpan hingga 50 data point terakhir
+    - Auto refresh dapat menyebabkan flicker, gunakan seperlunya
+    - Data MQTT masuk real-time meskipun auto-refresh off
+    - Lihat terminal untuk debug log setiap data yang masuk
+    - Broker: `broker.hivemq.com` (public MQTT broker)
+    
+    ### 🐛 Troubleshooting:
+    
+    - **MQTT tidak terhubung:** Cek koneksi internet & Wokwi
+    - **Data tidak masuk:** Pastikan topic MQTT sama persis
+    - **Kontrol tidak berfungsi:** Pastikan status 🟢 Terhubung
+    - **Grafik kosong:** Tunggu data masuk atau refresh manual
     """
     )
 
