@@ -1,19 +1,34 @@
 {
   "version": 1,
-  "author": "IoT Project",
+  "author": "Multi-Sensor Dashboard Team",
   "editor": "wokwi",
   "parts": [
-    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
-    { "type": "wokwi-dht22", "id": "dht1", "top": -40, "left": 100, "attrs": {} },
-    { "type": "wokwi-ntc-temperature-sensor", "id": "ntc1", "top": 100, "left": 100, "attrs": {} }
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 4.7, "left": 4.6, "attrs": {} },
+    { "type": "wokwi-dht22", "id": "dht1", "top": -47.7, "left": 119.4, "attrs": {} },
+    {
+      "type": "wokwi-ntc-temperature-sensor",
+      "id": "ntc1",
+      "top": -16.6,
+      "left": 201,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 81.6,
+      "left": 345.05,
+      "rotate": 90,
+      "attrs": { "value": "10000" }
+    }
   ],
   "connections": [
-    [ "dht1:VCC", "esp:3V3", "red", [ "h0" ] ],
-    [ "dht1:SDA", "esp:D15", "green", [ "h0" ] ],
-    [ "dht1:GND", "esp:GND", "black", [ "h0" ] ],
-    [ "ntc1:VCC", "esp:3V3", "red", [ "h0" ] ],
-    [ "ntc1:OUT", "esp:D34", "yellow", [ "h0" ] ],
-    [ "ntc1:GND", "esp:GND", "black", [ "h0" ] ]
+    [ "esp:3V3", "dht1:VCC", "red", [ "h0" ] ],
+    [ "esp:GND.1", "dht1:GND", "black", [ "h0" ] ],
+    [ "esp:D15", "dht1:SDA", "green", [ "h0" ] ],
+    [ "esp:3V3", "ntc1:VCC", "red", [ "h48" ] ],
+    [ "ntc1:OUT", "esp:D34", "blue", [ "v-105.7", "h-326.4" ] ],
+    [ "ntc1:OUT", "r1:1", "blue", [ "v-0.1", "h38.4" ] ],
+    [ "r1:2", "esp:GND.2", "black", [ "v94.8", "h-364.8" ] ]
   ],
   "dependencies": {}
 }

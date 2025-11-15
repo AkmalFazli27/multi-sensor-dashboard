@@ -1,51 +1,51 @@
-# Wokwi 1 - Sensor Suhu Udara dan Tanah
-
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <DHT.h>
+#include <ArduinoJson.h>
+#include <math.h>  // For NTC calculations
 
-// Pin Configuration
-#define DHTPIN 15
-#define DHTTYPE DHT22
-#define SOIL_TEMP_PIN 34
-
-// WiFi Credentials
 const char* ssid = "Wokwi-GUEST";
 const char* password = "";
 
-// MQTT Configuration
 const char* mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
 const char* mqtt_client_id = "WokwiClient1";
 
-// MQTT Topics
-const char* topic_temp_air = "wokwi/sensor/temp_air";
-const char* topic_temp_soil = "wokwi/sensor/temp_soil";
+const char* TOPIC_TEMP_AIR = "irrigation/sensor/environment";  
+const char* TOPIC_TEMP_SOIL = "irrigation/sensor/soil";  // Publish soil temperature
+
+#define DHTPIN 15
+#define DHTTYPE DHT22
+#define SOIL_TEMP_PIN 34
+
+#define SERIES_RESISTOR 10000
+#define NTC_NOMINAL 10000
+#define TEMP_NOMINAL 25
+#define B_COEFFICIENT 3950
+#define ADC_MAX 4095.0
+#define VCC 3.3
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 DHT dht(DHTPIN, DHTTYPE);
 
-unsigned long lastMsg = 0;
-const long interval = 2000; // Interval pengiriman data (ms)
+unsigned long lastPublish = 0;
+const long publishInterval = 2000;  // 2 seconds
 
 void setup_wifi() {
   delay(10);
   Serial.println();
-  Serial.print("Connecting to ");
+  Serial.print("Connecting to WiFi: ");
   Serial.println(ssid);
 
   WiFi.begin(ssid, password);
 
-  while (WiFi.status() != WL_CONNECTED) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
 }
 
 void reconnect() {
@@ -54,70 +54,120 @@ void reconnect() {
     
     if (client.connect(mqtt_client_id)) {
       Serial.println("connected");
+      Serial.println("Connected to MQTT broker");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
+      Serial.println(" retrying in 5 seconds");
       delay(5000);
     }
   }
 }
 
+float readNTCTemperature() {
+  int sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(SOIL_TEMP_PIN);
+    delay(10);
+  }
+  int rawADC = sum / 10;
+
+  float voltage = (rawADC / ADC_MAX) * VCC;
+
+  float resistance;
+  if (voltage > 0.01) {
+    resistance = SERIES_RESISTOR * ((VCC / voltage) - 1.0);
+  } else {
+    resistance = NTC_NOMINAL;
+  }
+
+  float steinhart;
+  steinhart = resistance / NTC_NOMINAL;
+  steinhart = log(steinhart);
+  steinhart /= B_COEFFICIENT;
+  steinhart += 1.0 / (TEMP_NOMINAL + 273.15);
+  steinhart = 1.0 / steinhart;
+  steinhart -= 273.15;
+
+  return steinhart;
+}
+
+void publishSensorData() {
+  float temp_air = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  float temp_soil = readNTCTemperature();
+
+  int soil_value = analogRead(SOIL_TEMP_PIN);  
+  soil_value = map(soil_value, 0, 4095, 1000, 0);  // contoh soil moisture (0–1000)
+
+  // Publish Air Temperature & Humidity
+  if (!isnan(temp_air) && !isnan(humidity)) {
+    StaticJsonDocument<200> doc;
+    doc["soil"] = soil_value;
+    doc["temp"] = round(temp_air * 10) / 10.0;
+    doc["hum"]  = round(humidity * 10) / 10.0;
+
+    char buffer[200];
+    serializeJson(doc, buffer);
+
+    if (client.publish(TOPIC_TEMP_AIR, buffer)) {
+      Serial.print("Published Air: ");
+      Serial.println(buffer);
+    } else {
+      Serial.println("Failed to publish environment data");
+    }
+  } else {
+    Serial.println("Failed to read DHT22 sensor");
+  }
+
+  // Publish Soil Temperature (NTC)
+  if (temp_soil > -10 && temp_soil < 60) {
+    StaticJsonDocument<100> docSoil;
+    docSoil["temperature"] = round(temp_soil * 10) / 10.0;
+
+    char bufferSoil[100];
+    serializeJson(docSoil, bufferSoil);
+
+    if (client.publish(TOPIC_TEMP_SOIL, bufferSoil)) {
+      Serial.print("Published Soil: ");
+      Serial.println(bufferSoil);
+    } else {
+      Serial.println("Failed to publish soil temp");
+    }
+  } else {
+    Serial.println("NTC reading out of range");
+  }
+}
+
 void setup() {
   Serial.begin(115200);
-  
-  // Initialize DHT sensor
+  delay(1000);
+
   dht.begin();
-  
-  // Setup WiFi
+  pinMode(SOIL_TEMP_PIN, INPUT);
+  analogReadResolution(12);
+
   setup_wifi();
-  
-  // Setup MQTT
   client.setServer(mqtt_server, mqtt_port);
-  
-  Serial.println("Wokwi 1 - Sensor Suhu Ready!");
+
+  Serial.println("\nSystem ready! Publishing data...\n");
 }
 
 void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected! Reconnecting...");
+    setup_wifi();
+  }
+
   if (!client.connected()) {
     reconnect();
   }
   client.loop();
 
-  unsigned long now = millis();
-  if (now - lastMsg > interval) {
-    lastMsg = now;
-    
-    // Baca Suhu Udara dari DHT22
-    float temp_air = dht.readTemperature();
-    
-    if (!isnan(temp_air)) {
-      // Format JSON untuk suhu udara
-      String payload_air = "{\"temperature\":" + String(temp_air, 1) + "}";
-      Serial.print("Suhu Udara: ");
-      Serial.print(temp_air);
-      Serial.print(" °C -> ");
-      Serial.println(payload_air);
-      
-      client.publish(topic_temp_air, payload_air.c_str());
-    } else {
-      Serial.println("Failed to read from DHT sensor!");
-    }
-    
-    // Baca Suhu Tanah dari NTC (simulasi menggunakan analog)
-    int sensorValue = analogRead(SOIL_TEMP_PIN);
-    // Map nilai analog ke rentang suhu realistis (15-35°C)
-    float temp_soil = map(sensorValue, 0, 4095, 150, 350) / 10.0;
-    
-    // Format JSON untuk suhu tanah
-    String payload_soil = "{\"temperature\":" + String(temp_soil, 1) + "}";
-    Serial.print("Suhu Tanah: ");
-    Serial.print(temp_soil);
-    Serial.print(" °C -> ");
-    Serial.println(payload_soil);
-    
-    client.publish(topic_temp_soil, payload_soil.c_str());
-    
-    Serial.println("---");
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastPublish >= publishInterval) {
+    lastPublish = currentMillis;
+    publishSensorData();
   }
 }
