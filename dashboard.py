@@ -80,23 +80,28 @@ _sensor_data_ref = st.session_state.sensor_data
 
 
 # Callback MQTT
-def on_connect(client, userdata, flags, rc, properties=None):
-    if rc == 0:
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    """Callback untuk koneksi MQTT (VERSION2)"""
+    if reason_code == 0:
         # Update status koneksi menggunakan referensi global
         _sensor_data_ref.set_mqtt_connected(True)
         
-        # Subscribe ke semua topic sensor
-        client.subscribe(TOPIC_TEMP_AIR)
-        client.subscribe(TOPIC_TEMP_SOIL)
-        client.subscribe(TOPIC_WATER_LEVEL)
-        client.subscribe(TOPIC_SERVO_STATUS)
-        client.subscribe(TOPIC_SERVO_CONTROL)
+        # Subscribe ke semua topic sensor dengan QoS 0
+        client.subscribe(TOPIC_TEMP_AIR, qos=0)
+        client.subscribe(TOPIC_TEMP_SOIL, qos=0)
+        client.subscribe(TOPIC_WATER_LEVEL, qos=0)
+        client.subscribe(TOPIC_SERVO_STATUS, qos=0)
+        client.subscribe(TOPIC_SERVO_CONTROL, qos=0)
 
         print("✅ Connected to MQTT Broker!")
-        print(f"📡 Subscribed to: {TOPIC_TEMP_AIR}, {TOPIC_TEMP_SOIL}, {TOPIC_WATER_LEVEL}, {TOPIC_SERVO_STATUS}")
+        print(f"📡 Subscribed to:")
+        print(f"   - {TOPIC_TEMP_AIR}")
+        print(f"   - {TOPIC_TEMP_SOIL}")
+        print(f"   - {TOPIC_WATER_LEVEL}")
+        print(f"   - {TOPIC_SERVO_STATUS}")
     else:
         _sensor_data_ref.set_mqtt_connected(False)
-        print(f"❌ Failed to connect, return code {rc}")
+        print(f"❌ Failed to connect, reason code {reason_code}")
 
 
 def on_message(client, userdata, msg):
@@ -109,19 +114,29 @@ def on_message(client, userdata, msg):
 
         # Gunakan referensi global untuk menghindari warning ScriptRunContext
         if topic == TOPIC_TEMP_AIR:
-            temp = payload.get("temperature", 0)
+            # Support dua format: {"temperature": x} atau {"temp": x, "hum": x, "soil": x}
+            temp = payload.get("temperature", payload.get("temp", 0))
             _sensor_data_ref.add_temp_air(temp)
             print(f"  🌤️ Air Temp: {temp}°C")
+            
+            # Jika ada data soil temperature di payload yang sama, ambil juga
+            if "soil" in payload:
+                soil_moisture = payload.get("soil", 0)
+                print(f"  🌱 Soil Moisture: {soil_moisture}")
+                
         elif topic == TOPIC_TEMP_SOIL:
-            temp = payload.get("temperature", 0)
+            # Support dua format: {"temperature": x} atau langsung dari payload soil
+            temp = payload.get("temperature", payload.get("temp", 0))
             _sensor_data_ref.add_temp_soil(temp)
             print(f"  🌱 Soil Temp: {temp}°C")
+            
         elif topic == TOPIC_WATER_LEVEL:
             # Handle water level with capacity_percent and distance
             capacity = payload.get("capacity_percent", 0)
             distance = payload.get("distance", 0)
             _sensor_data_ref.add_water_level(capacity, distance)
             print(f"  💧 Water: {capacity}% (distance: {distance}cm)")
+            
         elif topic == TOPIC_SERVO_STATUS:
             status = payload.get("status", "OFF")
             _sensor_data_ref.servo_status = status
@@ -133,9 +148,10 @@ def on_message(client, userdata, msg):
         print(f"❌ Error processing message from {msg.topic}: {e}")
 
 
-def on_disconnect(client, userdata, rc, properties=None):
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
+    """Callback untuk disconnect MQTT (VERSION2)"""
     _sensor_data_ref.set_mqtt_connected(False)
-    print("🔌 Disconnected from MQTT Broker")
+    print(f"🔌 Disconnected from MQTT Broker (reason: {reason_code})")
 
 
 # Fungsi untuk setup MQTT client
